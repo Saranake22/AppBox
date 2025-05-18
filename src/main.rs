@@ -1,6 +1,6 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
-use gtk::{glib, Application, ApplicationWindow, Label};
+use gtk::{glib, Application, ApplicationWindow, Label, Box, SearchEntry};
 
 use chrono::Local;
 
@@ -23,16 +23,38 @@ fn build_ui(application: &gtk::Application)
 {
     let window = ApplicationWindow::builder()
         .application(application)
-        .default_width(300)
-        .default_height(200)
+        .default_width(500)
+        .default_height(300)
         .title("hello world!")
+        .build();
+
+    /*let container = Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .margin_top(8).margin_bottom(8).margin_start(6).margin_end(6)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Start)
+        .spacing(4)
+        .build();*/
+    //let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let container = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .margin_top(12).margin_bottom(12).margin_start(12).margin_end(12)
+        .valign(gtk::Align::Start)
         .build();
 
     let time = do_magic();//current_time();
     let tlabel = Label::default();
     tlabel.set_text(&time);
 
-    window.set_child(Some(&tlabel));
+    let search_entry = SearchEntry::builder()
+        .placeholder_text("Search for more apps to install")
+        .build();
+    search_entry.set_hexpand(true);
+    
+    container.append(&search_entry);
+
+    window.set_child(Some(&container));
     window.present();
 
     /*let tick = move || {
@@ -49,7 +71,6 @@ fn current_time() -> String
     format!("{}", Local::now().format("%Y-%m-%d %H:%M:%S"))
 }
 */
-// https://github.com/ivan-hc/AM/issues/1215#issuecomment-2556811547
 
 fn get_app_num() -> u32
 {
@@ -81,7 +102,9 @@ fn do_magic() -> String
     let num = get_app_num();
     for i in 4..4+num {
         mystring.push_str(v[i as usize]);
-        mystring.push_str("\n");
+        if i != 3+num {
+            mystring.push_str("\n");
+        }
     }
 
     mystring
