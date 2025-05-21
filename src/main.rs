@@ -1,8 +1,11 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
-use gtk::{glib, Application, ApplicationWindow, Label, Box, SearchEntry};
+use gtk::{glib, Application, ApplicationWindow, 
+        Label, Box, SearchEntry, 
+        Orientation::Vertical, Orientation::Horizontal
+    };
 
-use chrono::Local;
+//use chrono::Local;
 
 fn main() -> glib::ExitCode {
     let app = Application::builder()
@@ -27,17 +30,11 @@ fn build_ui(application: &gtk::Application)
         .default_height(300)
         .title("hello world!")
         .build();
-
-    /*let container = Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .margin_top(8).margin_bottom(8).margin_start(6).margin_end(6)
-        .halign(gtk::Align::Center)
-        .valign(gtk::Align::Start)
-        .spacing(4)
-        .build();*/
-    //let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let container = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
+    
+    let winbox = Box::new(Vertical, 4);
+    
+    let container = Box::builder()
+        .orientation(Vertical)
         .spacing(6)
         .margin_top(12).margin_bottom(12).margin_start(12).margin_end(12)
         .valign(gtk::Align::Start)
@@ -53,8 +50,9 @@ fn build_ui(application: &gtk::Application)
     search_entry.set_hexpand(true);
     
     container.append(&search_entry);
+    winbox.append(&container);
 
-    window.set_child(Some(&container));
+    window.set_child(Some(&winbox));
     window.present();
 
     /*let tick = move || {
