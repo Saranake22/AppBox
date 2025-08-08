@@ -1,89 +1,134 @@
-use std::process::Command;
-use crate::types::AppInfo;
+use crate::AppInfo;
 use std::fs::create_dir_all;
+use reqwest::Client;
+use std::time::Duration;
+use std::collections::BTreeMap;
 
 use crate::util;
-use crate::types;
 
 pub(crate) fn init()
 {
-    let path = util::data_dir().unwrap();
-    create_dir_all(path.join("db")).unwrap();
+    let path = util::data_dir().unwrap().join("db");
+    create_dir_all(path).unwrap();
 }
 
-pub(crate) fn get_apps() -> std::io::Result<()>
+fn gh_client() -> Result<Client, reqwest::Error>
+{
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .user_agent("appbox/1.0")
+        .build()?;
+
+    Ok(client)
+}
+
+async fn get_webpage_text(url: &str) -> Result<String, reqwest::Error>
+{
+    let client = gh_client()?;
+    let response = client.get(url).send().await?.error_for_status()?;
+    let text = response.text().await?;
+
+    Ok(text)
+}
+
+pub(crate) async fn read_db_apps() -> std::io::Result<BTreeMap<String, Vec<AppInfo>>>
 {
     let path = util::data_dir().unwrap().join("db");
-    println!("{}", path.to_string_lossy().into_owned());
-    let dbfiles = util::fs_listdir(path.to_string_lossy().into_owned().as_str()).unwrap();
+    let dbfiles = util::fs_listdir(&path).await?;
+    let mut db: BTreeMap<String, Vec<AppInfo>> = BTreeMap::new();
+    for file in dbfiles {
+        println!("{}", file.to_str().unwrap());
+        let lines = util::fs_readlines(&file).unwrap();
 
-    println!("{:?}", dbfiles);
+        let appsinfo: Vec<AppInfo> = lines.iter().filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(2, ':').map(str::trim).collect();
+            if parts.len() == 2 {
+                Some(AppInfo {
+                    name: parts[0].to_string(),
+                     description: parts[1].trim().to_string(),
+                     installed: false,
+                })
+            } else {
+                println!("skipping: {:#?}", parts);
+                None
+            }
+        }).collect();
 
-    for file in dbfiles
-    {
-        let flines = util::fs_read(&file).unwrap();
-        for line in flines
-        {
-            println!("{}", line);
+        db.insert(file.file_name().unwrap().to_str().unwrap().to_string(), appsinfo);
+    }
+
+    Ok(db)
+}
+
+/// Downloads database files `{arch}-appimages` and `{arch}-portable`
+pub(crate) async fn create_db() -> std::io::Result<()>
+{
+    let arch: &str = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "x86") {
+        "i686"
+    } else {
+        ""
+    };
+    let appimages = match get_webpage_text(&format!("https://raw.githubusercontent.com/ivan-hc/AM/refs/heads/main/programs/{arch}-appimages")).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            String::new()
+        },
+    };
+    let portable = match get_webpage_text(&format!("https://raw.githubusercontent.com/ivan-hc/AM/refs/heads/main/programs/{arch}-portable")).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            String::new()
+        },
+    };
+
+    let databases = vec![("appimages", appimages), ("portable", portable)];
+
+    for (name, db) in databases {
+        let applist: Vec<AppInfo> = db.lines()
+        .filter_map(|line| {
+            let line = line.trim_start_matches('◆').trim();
+            let parts: Vec<&str> = line.splitn(2, ':').map(str::trim).collect();
+            //println!("parts.len: {}", parts.len());
+            if parts.len() == 2 {
+                Some(AppInfo {
+                    name: parts[0].to_string(),
+                     description: parts[1].trim().to_string(),
+                     installed: false,
+                })
+            } else {
+                println!("skipping: {:#?}", parts);
+                None
+            }
+        })
+        .collect();
+
+        let path = util::data_dir().unwrap().join("db").join(name);
+        println!("{}", applist.len());
+        for app in applist {
+            let data = format!("{}:{}\n", app.name, app.description);
+            util::fs_write(
+                &path,
+                &data, true, true
+            ).unwrap();
         }
     }
 
     Ok(())
 }
 
-pub(crate) fn create_applist() -> std::io::Result<Vec<AppInfo>>
+/// Purges database files in `~/.local/share/appbox/db`
+pub(crate) async fn purge_db() -> std::io::Result<()>
 {
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg("am list --all | cat")
-        .output().expect("Failed to fetch app list from am.");
-
-    let bruh = String::from_utf8_lossy(&output.stdout).to_string();
-    let outputstr = bruh.as_str();
-
-    let applist = outputstr.lines()
-    .filter_map(|line| {
-        let parts: Vec<&str> = line.trim().split(':').map(str::trim).collect();
-        println!("parts.len: {}", parts.len());
-        if parts.len() == 2 {
-            Some(AppInfo {
-                name: parts[0].trim_start_matches('◆').trim().to_string(),
-                description: parts[1].trim().to_string(),
-            })
-        } else {
-            None
-        }
-    })
-    .collect();
-
-    Ok(applist)
-}
-
-pub(crate) fn create_db() -> std::io::Result<()>
-{
-    let bruh = create_applist().unwrap();
-    let path = util::data_dir().unwrap().join("db");
-    for app in bruh
-    {
-        let data = format!("{}:{}", app.name, app.description);
-        let path = path.join(app.name.chars().next().unwrap().to_string());
-        println!("{}", data.as_str());
-        println!("{}", path.to_string_lossy().into_owned());
-        util::fs_write(
-            &path.to_string_lossy().into_owned(),
-            &data, true, true
-        ).unwrap();
+    let path = util::data_dir()?.join("db");
+    for entry in util::fs_listdir(&path).await? {
+        util::fs_write(&entry.as_path(), "", false, true)?;
     }
-
-    Ok(())
-}
-
-pub(crate) fn purge_db() -> std::io::Result<()>
-{
-    let _ = std::process::Command::new("bash")
-        .arg("-c")
-        .arg("rm -rf ~/.local/share/appbox/db/*")
-        .output().expect("Failed to purge db");
 
     Ok(())
 }

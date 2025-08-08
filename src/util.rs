@@ -1,28 +1,30 @@
 use std::fs;
 use fs::{File, OpenOptions};
 use std::io::{Write, BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::io::Result;
 
-pub(crate) fn data_dir() -> Result<std::path::PathBuf>
+pub(crate) fn data_dir() -> Result<PathBuf>
 {
     Ok(Path::new(&std::env::var("HOME").unwrap()).join(".local/share/appbox"))
 }
 
-pub(crate) fn fs_write(path: &str, data: &str, append: bool, create: bool) -> std::io::Result<()>
+pub(crate) fn fs_write(path: &Path, data: &str, append: bool, create: bool) -> std::io::Result<()>
 {
     if let Ok(mut file) = OpenOptions::new()
-        .append(append)
+        .write(true)
         .create(create)
+        .truncate(!append)
+        .append(append)
         .open(path)
     {
-        let _ = writeln!(file, "{}", data);
+        let _ = write!(file, "{}", data);
     }
 
     Ok(())
 }
 
-pub(crate) fn fs_read(path: &str) -> Result<Vec<String>>
+pub(crate) fn fs_readlines(path: &Path) -> Result<Vec<String>>
 {
     let path = Path::new(path);
     let file = File::open(&path)?;
@@ -36,17 +38,14 @@ pub(crate) fn fs_read(path: &str) -> Result<Vec<String>>
     Ok(lines)
 }
 
-pub(crate) fn fs_listdir(path: &str) -> Result<Vec<String>>
+pub(crate) async fn fs_listdir(path: &Path) -> Result<Vec<PathBuf>>
 {
-    let files: Vec<String>;
-    let output = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(format!("for i in {}/*; do echo $i; done", path))
-        .output().expect("Failed to read db files");
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut read = tokio::fs::read_dir(path).await?;
 
-    println!("{}", String::from_utf8_lossy(&output.stdout).to_string());
-    let outputstring = String::from_utf8_lossy(&output.stdout).to_string();
-    files = outputstring.lines().map(|line| line.to_string()).collect();
+    while let Some(entry) = read.next_entry().await? {
+        files.push(entry.path());
+    }
 
     Ok(files)
 }
