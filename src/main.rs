@@ -188,6 +188,8 @@ pub struct Widgets {
     syncdb: gtk::Button,
     busy_spinner: gtk::Spinner,
     filter_menu: gtk::DropDown,
+    sortby_menu: gtk::DropDown,
+    sortorder_menu: gtk::DropDown,
     //searchbutton: gtk::Button,
 }
 
@@ -349,7 +351,7 @@ impl AsyncComponent for App {
                             set_spacing: 8,
 
                             gtk::Label {
-                                set_markup: "<b>Filters:</b>",
+                                set_markup: "<b>Database:</b>",
                                 set_hexpand: false,
                                 set_halign: Align::Start,
                             },
@@ -384,7 +386,21 @@ impl AsyncComponent for App {
                                 }
                             },*/
 
-                            append: filter_menu = &gtk::DropDown {}
+                            append: filter_menu = &gtk::DropDown {},
+
+                            gtk::Label {
+                                set_markup: "<b>Sort By:</b>",
+                                set_hexpand: false,
+                                set_halign: Align::Start,
+                            },
+                            append: sortby_menu = &gtk::DropDown {},
+
+                            gtk::Label {
+                                set_markup: "<b>Sort Order:</b>",
+                                set_hexpand: false,
+                                set_halign: Align::Start,
+                            },
+                            append: sortorder_menu = &gtk::DropDown {}
                         },
 
                         gtk::Box {
@@ -438,6 +454,19 @@ impl AsyncComponent for App {
                 },
             }
         }
+        let filter_model = gtk::StringList::new(&["AppImages", "Portable Apps"]);
+        filter_menu.set_model(Some(&filter_model));
+        //filter_menu.set_expression(gtk::Expression::NONE);
+
+        let sortby_model = gtk::StringList::new(&["Database", "Name", "Description"]);
+        sortby_menu.set_model(Some(&sortby_model));
+        //sortorder_menu.set_expression(gtk::Expression::NONE);
+
+        let sortorder_model = gtk::StringList::new(&["Ascending", "Descending"]);
+        sortorder_menu.set_model(Some(&sortorder_model));
+        //sortorder_menu.set_expression(gtk::Expression::NONE);
+        println!("{:#?}", util::get_installed_apps());
+
         let myapps = apps_list.get("AppImages").unwrap();
         sender.input_sender().send(Input::UpdateApps(myapps.to_vec())).unwrap();
 
@@ -453,6 +482,8 @@ impl AsyncComponent for App {
                 refreshapps,
                 busy_spinner,
                 filter_menu,
+                sortby_menu,
+                sortorder_menu,
                 //searchbutton,
             },
         }
@@ -592,4 +623,12 @@ impl AsyncComponent for App {
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub struct AppEntry {
+    pub name: String,
+    pub version: String,
+    pub kind: String,
+    pub size: String,
 }
