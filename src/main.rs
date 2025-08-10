@@ -1,8 +1,14 @@
 use std::collections::BTreeMap;
 
 use futures_util::FutureExt;
-use relm4::gtk::prelude::EditableExt;
-use relm4::{gtk, component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender}, factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque}, RelmApp, RelmWidgetExt};
+use relm4::gtk::prelude::{EditableExt, ListItemExt};
+
+use relm4::{
+    gtk, component::{AsyncComponent, AsyncComponentParts, AsyncComponentSender},
+    typed_view::list::{RelmListItem, TypedListView},
+    RelmApp, RelmWidgetExt
+};
+
 use gtk::{Orientation, Align};
 use gtk::prelude::{BoxExt, GridExt, WidgetExt, GtkWindowExt, OrientableExt, ButtonExt, CheckButtonExt, EntryExt};
 
@@ -27,6 +33,139 @@ fn main() -> std::io::Result<()>
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+pub struct AppInfo
+{
+    pub name: String,
+    pub description: String,
+    pub database: String, // AppImages or Portable Apps
+    pub installed: bool,
+}
+
+impl PartialEq for AppInfo {
+    fn eq(&self, other: &Self) -> bool
+    {
+        other.name.contains(&self.name) || other.description.contains(&self.description)
+    }
+}
+
+impl Eq for AppInfo {}
+
+impl PartialOrd for AppInfo {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+    {
+        Some(self.name.cmp(&other.name))
+    }
+}
+
+impl Ord for AppInfo {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering
+    {
+        self.name.cmp(&other.name)
+    }
+}
+
+pub struct AppWidgets {
+    pub name_label: gtk::Label,
+    pub description_label: gtk::Label,
+    pub db_label: gtk::Label,
+    pub action_btn: gtk::Button,
+}
+
+impl RelmListItem for AppInfo {
+    type Root = gtk::Frame;
+    type Widgets = AppWidgets;
+
+    fn setup(_item: &gtk::ListItem) -> (gtk::Frame, AppWidgets)
+    {
+        relm4::view! {
+            app_box = gtk::Frame {
+                set_margin_vertical: 1,
+                set_expand: false,
+                set_hexpand: true,
+                set_valign: Align::Start,
+                set_vexpand: false,
+                set_height_request: 50,
+
+                gtk::Grid {
+                    set_column_homogeneous: false,
+                    set_row_homogeneous: false,
+                    set_margin_horizontal: 8,
+                    set_margin_vertical: 12,
+                    set_column_spacing: 12,
+
+                    #[name = "name_label"]
+                    attach[0, 1, 1, 1] = &gtk::Label {
+                        set_halign: Align::Start,
+                        add_css_class: "title-4"
+                    },
+
+                    attach[0, 0, 1, 1] = &gtk::Image {
+                        set_align: Align::Center,
+                        set_icon_name: Some("0ad"),
+                        set_icon_size: gtk::IconSize::Large,
+                        //add_css_class: "title-4"
+                    },
+
+                    #[name = "description_label"]
+                    attach[1, 0, 1, 1] = &gtk::Label {
+                        set_halign: Align::Start,
+                        set_xalign: 0.0,
+                        set_wrap: true,
+                        set_natural_wrap_mode: gtk::NaturalWrapMode::Word,
+                        set_hexpand: true,
+                        set_width_request: 450,
+                        set_lines: 2,
+                        add_css_class: "dim-label"
+                    },
+
+                    #[name = "action_btn"]
+                    attach[2, 0, 1, 1] = &gtk::Button {
+                        //set_label: "Install",
+                        set_valign: Align::Center,
+                        //add_css_class: "suggested-action"
+                    },
+
+                    #[name = "db_label"]
+                    attach[1, 1, 1, 1] = &gtk::Label {
+                        set_halign: Align::Start,
+                        //add_css_class: "caption"
+                    },
+                },
+            }
+        }
+
+        let widgets = AppWidgets {
+            name_label,
+            description_label,
+            db_label,
+            action_btn
+        };
+
+        (app_box, widgets)
+    }
+
+    fn bind(&mut self, widgets: &mut Self::Widgets, _root: &mut Self::Root)
+    {
+        widgets.name_label.set_label(&self.name);
+        widgets.description_label.set_label(&self.description);
+        widgets.db_label.set_markup(&format!("<b>Database:</b> {}", &self.database));
+        if self.installed {
+            widgets.action_btn.set_label("Uninstall");
+            widgets.action_btn.remove_css_class("suggested-action");
+            widgets.action_btn.add_css_class("destructive-action");
+        }
+        else {
+            widgets.action_btn.set_label("Install");
+            widgets.action_btn.remove_css_class("destructive-action");
+            widgets.action_btn.add_css_class("suggested-action");
+        }
+    }
+
+    //fn unbind(&mut self, _widgets: &mut Self::Widgets, _root: &mut Self::Root)
+    //{}
+}
+
 //#[derive(Default)]
 pub struct App {
     /// Tracks progress status
@@ -36,7 +175,7 @@ pub struct App {
     /// Contains output of a completed task.
     task: Option<CmdOut>,
     /// Holds the apps' widgets
-    apps: FactoryVecDeque<AppInfo>,
+    apps_list_view: TypedListView<AppInfo, gtk::SingleSelection>,
     /// Holds **all** the apps for querying and adding to `apps` if they match
     apps_list: BTreeMap<String, Vec<AppInfo>>,
 }
@@ -48,6 +187,7 @@ pub struct Widgets {
     refreshapps: gtk::Button,
     syncdb: gtk::Button,
     busy_spinner: gtk::Spinner,
+    filter_menu: gtk::DropDown,
     //searchbutton: gtk::Button,
 }
 
@@ -56,8 +196,9 @@ pub enum Input {
     Search(String),
     FetchDatabse,
     RefreshApps,
-    InstalledApp(DynamicIndex),
-    UninstalledApp(DynamicIndex),
+    UpdateApps(Vec<AppInfo>)
+    //InstalledApp(DynamicIndex),
+    //UninstalledApp(DynamicIndex),
 }
 
 #[derive(Debug)]
@@ -96,13 +237,7 @@ impl AsyncComponent for App {
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self>
     {
-
-        let apps = FactoryVecDeque::builder()
-        .launch_default()
-        .forward(sender.input_sender(), |msg| match msg {
-            AppInfoOutput::Installed(index) => Input::InstalledApp(index),
-            AppInfoOutput::Uninstalled(index) => Input::UninstalledApp(index),
-        });
+        let apps_list_view: TypedListView<AppInfo, gtk::SingleSelection> = TypedListView::with_sorting();
 
         let apps_list: BTreeMap<String, Vec<AppInfo>> = match caching::read_db_apps().await {
             Ok(a) => a,
@@ -116,11 +251,12 @@ impl AsyncComponent for App {
             searching: false,
             refresh_sync: false,
             task: Some(CmdOut::default()),
-            apps,
-            apps_list,
+            //apps,
+            apps_list_view,
+            apps_list: apps_list.clone(),
         };
 
-        let apps_box = model.apps.widget();
+        let apps_view = &model.apps_list_view.view;
 
         relm4::view! {
             container = gtk::Box {
@@ -128,7 +264,7 @@ impl AsyncComponent for App {
                 set_valign: Align::Start,
                 set_spacing: 8,
                 set_margin_vertical: 14,
-                set_margin_horizontal: 50,
+                set_margin_horizontal: 100,
                 set_orientation: Orientation::Vertical,
 
                 append: errorbox = &gtk::Box {
@@ -154,44 +290,45 @@ impl AsyncComponent for App {
 
                 gtk::Box {
                     set_spacing: 4,
-                    set_hexpand: true,
-                    set_align: Align::Fill,
+                    set_hexpand: false,
+                    set_align: Align::Center,
                     set_orientation: gtk::Orientation::Horizontal,
 
-                    gtk::Box {
-                        set_halign: Align::Center,
-                        set_hexpand: true,
+                    //gtk::Box {
+                    //    set_halign: Align::Center,
+                    //    set_hexpand: true,
+                    //    //set_margin_horizontal: 300,
 
-                        append: searchbar = &gtk::Entry {
-                            set_hexpand: false,
-                            set_width_request: 500,
-                            set_primary_icon_name: Some("system-search-symbolic"),
-                            set_secondary_icon_name: Some("edit-clear-symbolic"),
-                            set_primary_icon_activatable: true,
-                            set_secondary_icon_activatable: true,
-                            connect_icon_release[sender] => move |entry, icon_pos| {
-                                match icon_pos {
-                                    gtk::EntryIconPosition::Primary => {
-                                        sender.input(Input::Search(entry.text().to_string()));
-                                    }
-                                    gtk::EntryIconPosition::Secondary => {
-                                        entry.set_text("");
-                                    }
-                                    _ => (),
+                    append: searchbar = &gtk::Entry {
+                        set_hexpand: false,
+                        set_width_request: 700,
+                        set_primary_icon_name: Some("system-search-symbolic"),
+                        set_secondary_icon_name: Some("edit-clear-symbolic"),
+                        set_primary_icon_activatable: true,
+                        set_secondary_icon_activatable: true,
+                        connect_icon_release[sender] => move |entry, icon_pos| {
+                            match icon_pos {
+                                gtk::EntryIconPosition::Primary => {
+                                    sender.input(Input::Search(entry.text().to_string()));
                                 }
-                            },
-                            connect_activate[sender] => move |entry| {
-                                sender.input(Input::Search(entry.text().to_string()));
-                            },
+                                gtk::EntryIconPosition::Secondary => {
+                                    entry.set_text("");
+                                }
+                                _ => (),
+                            }
+                        },
+                        connect_activate[sender] => move |entry| {
+                            sender.input(Input::Search(entry.text().to_string()));
                         },
                     },
+                    //},
                 },
 
                 gtk::Frame {
-                    set_hexpand: false,
+                    set_hexpand: true,
                     set_vexpand: false,
-                    set_size_request: (600, 50),
-                    set_halign: Align::Center,
+                    set_size_request: (500, 50),
+                    set_halign: Align::Fill,
 
                     gtk::Box {
                         set_orientation: Orientation::Horizontal,
@@ -217,7 +354,7 @@ impl AsyncComponent for App {
                                 set_halign: Align::Start,
                             },
 
-                            gtk::Box {
+                            /*gtk::Box {
                                 set_spacing: 10,
                                 set_hexpand: true,
 
@@ -245,7 +382,9 @@ impl AsyncComponent for App {
                                         }
                                     }
                                 }
-                            },
+                            },*/
+
+                            append: filter_menu = &gtk::DropDown {}
                         },
 
                         gtk::Box {
@@ -281,83 +420,26 @@ impl AsyncComponent for App {
                     set_spinning: false,
                 },
 
-                gtk::Label {
-                    set_markup: "<span font-weight=\"bold\" font-size=\"large\">AppImages (n)</span>",
-                    set_halign: Align::Start,
-                    set_margin_vertical: 12,
-                },
-
                 gtk::ScrolledWindow {
-                    set_hexpand: false,
-                    set_height_request: 400,
+                    set_height_request: 450,
+                    set_valign: Align::Fill,
                     set_vexpand: true,
+                    set_hexpand: true,
 
                     gtk::Box {
                         set_orientation: Orientation::Vertical,
-                        set_spacing: 2,
                         set_margin_horizontal: 16,
-                        set_vexpand: true,
-
-                        gtk::Frame {
-                            //set_margin_vertical: 2,
-                            set_expand: false,
-                            set_halign: Align::Fill,
-                            set_hexpand: true,
-                            set_valign: Align::Start,
-                            set_vexpand: false,
-                            set_height_request: 50,
-
-                            gtk::Grid {
-                                set_column_homogeneous: false,
-                                set_row_homogeneous: false,
-                                set_margin_horizontal: 8,
-                                set_margin_vertical: 12,
-                                set_column_spacing: 12,
-
-                                // Column 0 - Name
-                                attach[0, 0, 1, 1] = &gtk::Label {
-                                    set_markup: "<b>My App</b>",
-                                    set_halign: gtk::Align::Start
-                                },
-
-                                // Column 1 - Description
-                                attach[1, 0, 1, 1] = &gtk::Label {
-                                    set_label: "A cool app that does things",
-                                    set_halign: gtk::Align::Start,
-                                    set_xalign: 0.0,
-                                    set_wrap: true,
-                                    set_natural_wrap_mode: gtk::NaturalWrapMode::Word, // allow multi-line if needed
-                                    set_hexpand: true,
-                                    set_width_request: 450,
-                                },
-
-                                // Column 2 - Install/Uninstall button
-                                attach[2, 0, 1, 1] = &gtk::Button {
-                                    set_label: "Install",
-                                    connect_clicked => move |_| {
-                                        println!("Install clicked!");
-                                    }
-                                }
-                            },
-                        },
-                    },
-                },
-
-                gtk::Box {
-                    set_orientation: Orientation::Horizontal,
-
-                    gtk::ScrolledWindow {
-                        set_expand: true,
+                        set_valign: Align::Fill,
                         set_vexpand: true,
 
                         #[local_ref]
-                        apps_box -> gtk::ListBox {
-                            set_selection_mode: gtk::SelectionMode::None,
-                        }
-                    }
-                }
+                        apps_view -> gtk::ListView {}
+                    },
+                },
             }
         }
+        let myapps = apps_list.get("AppImages").unwrap();
+        sender.input_sender().send(Input::UpdateApps(myapps.to_vec())).unwrap();
 
         root.set_child(Some(&container));
 
@@ -370,6 +452,7 @@ impl AsyncComponent for App {
                 syncdb,
                 refreshapps,
                 busy_spinner,
+                filter_menu,
                 //searchbutton,
             },
         }
@@ -439,8 +522,14 @@ impl AsyncComponent for App {
                         .boxed()
                 });
             }
-            Input::InstalledApp(_index) => {()}
-            Input::UninstalledApp(_index) => {()}
+            Input::UpdateApps(apps) => {
+                self.apps_list_view.clear();
+                for app in apps {
+                    self.apps_list_view.append(app);
+                }
+            }
+            //Input::InstalledApp(_index) => {()}
+            //Input::UninstalledApp(_index) => {()}
         }
     }
 
@@ -504,53 +593,3 @@ impl AsyncComponent for App {
         }
     }
 }
-/*
-#[derive(Debug, Clone)]
-struct AppEntry
-{
-    pub name: String,
-    pub version: String,
-    pub kind: String,
-    pub size: String,
-}
-*/
-
-#[derive(Debug, Clone)]
-struct AppInfo
-{
-    pub name: String,
-    pub description: String,
-    pub installed: bool,
-}
-
-#[derive(Debug)]
-enum AppInfoMsg {}
-
-#[derive(Debug)]
-enum AppInfoOutput {
-    Installed(DynamicIndex),
-    Uninstalled(DynamicIndex),
-}
-
-#[relm4::factory]
-impl FactoryComponent for AppInfo {
-    type Init = AppInfo;
-    type Input = AppInfoMsg;
-    type Output = AppInfoOutput;
-    type CommandOutput = ();
-    type ParentWidget = gtk::ListBox;
-
-    view! {
-        root = gtk::Box {
-            set_margin_all: 6,
-            set_hexpand: true,
-            set_height_request: 120,
-        }
-    }
-
-    fn init_model(info: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> AppInfo
-    {
-        info
-    }
-}
-

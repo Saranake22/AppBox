@@ -45,8 +45,9 @@ pub(crate) async fn read_db_apps() -> std::io::Result<BTreeMap<String, Vec<AppIn
             if parts.len() == 2 {
                 Some(AppInfo {
                     name: parts[0].to_string(),
-                     description: parts[1].trim().to_string(),
-                     installed: false,
+                    description: parts[1].trim().to_string(),
+                    database: file.file_name().unwrap().to_string_lossy().to_string(),
+                    installed: true,
                 })
             } else {
                 println!("skipping: {:#?}", parts);
@@ -87,7 +88,7 @@ pub(crate) async fn create_db() -> std::io::Result<()>
         },
     };
 
-    let databases = vec![("appimages", appimages), ("portable", portable)];
+    let databases = vec![("AppImages", appimages), ("Portable Apps", portable)];
 
     for (name, db) in databases {
         let applist: Vec<AppInfo> = db.lines()
@@ -99,6 +100,7 @@ pub(crate) async fn create_db() -> std::io::Result<()>
                 Some(AppInfo {
                     name: parts[0].to_string(),
                      description: parts[1].trim().to_string(),
+                     database: name.to_string(),
                      installed: false,
                 })
             } else {
